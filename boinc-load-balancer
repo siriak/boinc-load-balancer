@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# let k = 100 / num_threads
+# the following constraint must be satisfied:
+# 0.5k < granularity < k <= 25
+# and it's better to use a divisor of 100
+GRANULARITY=5
+TARGET_FREE_CPU=$(( 2 * GRANULARITY ))
+
+PAUSE_SHORT="1s"
+PAUSE_LONG="5s"
+
+CHANGE_THRESHOLD=$GRANULARITY
+
+MIN_CPU=$GRANULARITY
+MAX_CPU=100
+
+# will increase load if temperature is that low
+TEMP_LOW=61
+# will decrease load if temperature is that high
+TEMP_HIGH=64
+
+TIMES_TEMP_LOW=0
+TIMES_TEMP_HIGH=0
+
+BASE_SUSPEND_CPU=$(( 100 - $TARGET_FREE_CPU ))
+
+BOINC_DAT=$(grep BOINC_DIR /etc/default/boinc-client | grep -v "^#" | cut -d"\"" -f2)
+cd $BOINC_DAT
+mkdir -p tmp
+
+# current settings
+CURR_CPU=$(grep "<max_ncpus_pct>" global_prefs_override.xml | cut -d">" -f2 | cut -d"." -f1)
+CURR_SUSPEND_CPU=$(grep "<suspend_cpu_usage>" global_prefs_override.xml | cut -d">" -f2 | cut -d"." -f1)
+
+# advised settings
+ADV_CPU=$CURR_CPU
+ADV_SUSPEND_CPU=$BASE_SUSPEND_CPU
+
+while [ -f "lockfile" ]
+do
+	CURR_CPU_USAGE=$(echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')])
+	CURR_TEMP=$(sensors | grep Package | cut -d "+" -f2 | cut -d "." -f1 )
+	NET_CHANGE=$(( 100 - $TARGET_FREE_CPU - $CURR_CPU_USAGE))
+	DECIDED=false
+	PAUSE=$PAUSE_LONG
+
+	# note if temp is too low
+	if [[ $CURR_TEMP -le $TEMP_LOW ]]
+	then
+		TIMES_TEMP_HIGH=0
+		TIMES_TEMP_LOW=$(( $TIMES_TEMP_LOW + 1 ))
+	fi
+
+	# note if temp is too high
+	if [[ $CURR_TEMP -ge $TEMP_HIGH ]]
+	then
+		TIMES_TEMP_LOW=0
+		TIMES_TEMP_HIGH=$(( $TIMES_TEMP_HIGH + 1 ))
+	fi
+
+	# decrease BOINC load if system load is high
+	if [[ $NET_CHANGE -le $(( -1 * $CHANGE_THRESHOLD )) ]]
+	then
+		while [[ $ADV_CPU -gt $(( $CURR_CPU + $NET_CHANGE )) ]]
+		do
+			ADV_CPU=$(( $ADV_CPU - $CHANGE_THRESHOLD ))
+		done
+
+		PAUSE=$PAUSE_SHORT
+		DECIDED=true
+	fi
+
+	# decreace load if temperature is too high
+	if ! $DECIDED && [[ $TIMES_TEMP_HIGH -ge 5 ]]
+	then
+		ADV_CPU=$(( $CURR_CPU - $CHANGE_THRESHOLD ))
+		TIMES_TEMP_HIGH=0
+		DECIDED=true
+	fi
+
+	# increase load if temperature and system load are low
+	if ! $DECIDED && [[ $NET_CHANGE -ge $CHANGE_THRESHOLD && $TIMES_TEMP_LOW -ge 3 ]]
+	then
+		ADV_CPU=$(( $CURR_CPU + $CHANGE_THRESHOLD ))
+		ADV_SUSPEND_CPU=$BASE_SUSPEND_CPU
+		TIMES_TEMP_LOW=0
+		DECIDED=true
+	fi
+
+	# lower load bound check
+	if [[ $ADV_CPU -lt $MIN_CPU ]]
+	then
+		ADV_CPU=$MIN_CPU
+		ADV_SUSPEND_CPU=1
+	fi
+
+	# upper load bound check
+	if [[ $ADV_CPU -gt $MAX_CPU ]]
+	then
+		ADV_CPU=$MAX_CPU
+	fi
+
+	# apply changes if there are any
+	if [[ $ADV_CPU -ne $CURR_CPU || $ADV_SUSPEND_CPU -ne $CURR_SUSPEND_CPU ]]
+	then
+		sed '/max_ncpus_pct/ s/'$CURR_CPU'/'$ADV_CPU'/' <global_prefs_override.xml >tmp/global_prefs_override1.xml
+		sed '/suspend_cpu_usage/ s/'$CURR_SUSPEND_CPU'/'$ADV_SUSPEND_CPU'/' <tmp/global_prefs_override1.xml >tmp/global_prefs_override.xml
+		cp tmp/global_prefs_override.xml global_prefs_override.xml
+		CURR_CPU=$ADV_CPU
+		CURR_SUSPEND_CPU=$ADV_SUSPEND_CPU
+		boinccmd --read_global_prefs_override
+	fi
+
+	sleep $PAUSE
+done
