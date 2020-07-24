@@ -71,7 +71,7 @@ do
 		DECIDED=true
 	fi
 
-	# decreace load if temperature is too high
+	# decrease load if temperature is too high
 	if ! $DECIDED && [[ $TIMES_TEMP_HIGH -ge 5 ]]
 	then
 		ADV_CPU=$(( $CURR_CPU - $CHANGE_THRESHOLD ))
