@@ -5,7 +5,7 @@
 # 0.5k < granularity < k <= 25
 # and it's better to use a divisor of 100
 GRANULARITY=5
-TARGET_FREE_CPU=$(( 2 * GRANULARITY ))
+TARGET_FREE_CPU=$(( 2 * $GRANULARITY ))
 
 PAUSE_SHORT="1s"
 PAUSE_LONG="5s"
@@ -13,7 +13,8 @@ PAUSE_LONG="5s"
 CHANGE_THRESHOLD=$GRANULARITY
 
 MIN_CPU=$GRANULARITY
-MAX_CPU=100
+MAX_CPU_DAY=100
+MAX_CPU_NIGHT=$GRANULARITY
 
 # will increase load if temperature is that low
 TEMP_LOW=61
@@ -44,6 +45,14 @@ do
 	NET_CHANGE=$(( 100 - $TARGET_FREE_CPU - $CURR_CPU_USAGE))
 	DECIDED=false
 	PAUSE=$PAUSE_LONG
+
+	NOW=$( date +'%H' )
+	if [ $NOW -ge '23' ] || [ $NOW -lt '8' ]
+	then
+		MAX_CPU=$MAX_CPU_NIGHT
+	else
+		MAX_CPU=$MAX_CPU_DAY
+	fi
 
 	# note if temp is too low
 	if [[ $CURR_TEMP -le $TEMP_LOW ]]
