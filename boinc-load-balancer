@@ -13,16 +13,7 @@ PAUSE_LONG="5s"
 CHANGE_THRESHOLD=$GRANULARITY
 
 MIN_CPU=$GRANULARITY
-MAX_CPU_DAY=100
-MAX_CPU_NIGHT=$GRANULARITY
-
-# will increase load if temperature is that low
-TEMP_LOW=61
-# will decrease load if temperature is that high
-TEMP_HIGH=64
-
-TIMES_TEMP_LOW=0
-TIMES_TEMP_HIGH=0
+MAX_CPU=100
 
 BASE_SUSPEND_CPU=$(( 100 - $TARGET_FREE_CPU ))
 
@@ -41,32 +32,8 @@ ADV_SUSPEND_CPU=$BASE_SUSPEND_CPU
 while [ -f "lockfile" ]
 do
 	CURR_CPU_USAGE=$(echo $[100-$(vmstat 1 2|tail -1|awk '{print $15}')])
-	CURR_TEMP=$(sensors | grep Package | cut -d "+" -f2 | cut -d "." -f1 )
 	NET_CHANGE=$(( 100 - $TARGET_FREE_CPU - $CURR_CPU_USAGE))
-	DECIDED=false
 	PAUSE=$PAUSE_LONG
-
-	NOW=$( date +'%H' )
-	if [ $NOW -ge '23' ] || [ $NOW -lt '8' ]
-	then
-		MAX_CPU=$MAX_CPU_NIGHT
-	else
-		MAX_CPU=$MAX_CPU_DAY
-	fi
-
-	# note if temp is too low
-	if [[ $CURR_TEMP -le $TEMP_LOW ]]
-	then
-		TIMES_TEMP_HIGH=0
-		TIMES_TEMP_LOW=$(( $TIMES_TEMP_LOW + 1 ))
-	fi
-
-	# note if temp is too high
-	if [[ $CURR_TEMP -ge $TEMP_HIGH ]]
-	then
-		TIMES_TEMP_LOW=0
-		TIMES_TEMP_HIGH=$(( $TIMES_TEMP_HIGH + 1 ))
-	fi
 
 	# decrease BOINC load if system load is high
 	if [[ $NET_CHANGE -le $(( -1 * $CHANGE_THRESHOLD )) ]]
@@ -76,38 +43,26 @@ do
 			ADV_CPU=$(( $ADV_CPU - $CHANGE_THRESHOLD ))
 		done
 
+		# lower load bound check
+		if [[ $ADV_CPU -lt $MIN_CPU ]]
+		then
+			ADV_CPU=$MIN_CPU
+			ADV_SUSPEND_CPU=1
+		fi
+
 		PAUSE=$PAUSE_SHORT
-		DECIDED=true
 	fi
 
-	# decrease load if temperature is too high
-	if ! $DECIDED && [[ $TIMES_TEMP_HIGH -ge 5 ]]
-	then
-		ADV_CPU=$(( $CURR_CPU - $CHANGE_THRESHOLD ))
-		TIMES_TEMP_HIGH=0
-		DECIDED=true
-	fi
+        if [[ $NET_CHANGE -ge $CHANGE_THRESHOLD ]]
+        then
+                ADV_CPU=$(( $CURR_CPU + $CHANGE_THRESHOLD ))
+                ADV_SUSPEND_CPU=$BASE_SUSPEND_CPU
 
-	# increase load if temperature and system load are low
-	if ! $DECIDED && [[ $NET_CHANGE -ge $CHANGE_THRESHOLD && $TIMES_TEMP_LOW -ge 3 ]]
-	then
-		ADV_CPU=$(( $CURR_CPU + $CHANGE_THRESHOLD ))
-		ADV_SUSPEND_CPU=$BASE_SUSPEND_CPU
-		TIMES_TEMP_LOW=0
-		DECIDED=true
-	fi
-
-	# lower load bound check
-	if [[ $ADV_CPU -lt $MIN_CPU ]]
-	then
-		ADV_CPU=$MIN_CPU
-		ADV_SUSPEND_CPU=1
-	fi
-
-	# upper load bound check
-	if [[ $ADV_CPU -gt $MAX_CPU ]]
-	then
-		ADV_CPU=$MAX_CPU
+		# upper load bound check
+		if [[ $ADV_CPU -gt $MAX_CPU ]]
+		then
+			ADV_CPU=$MAX_CPU
+		fi
 	fi
 
 	# apply changes if there are any
