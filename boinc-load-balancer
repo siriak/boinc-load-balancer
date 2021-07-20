@@ -5,7 +5,7 @@
 # 0.5k < granularity < k <= 25
 # and it's better to use a divisor of 100
 GRANULARITY=5
-TARGET_FREE_CPU=$(( 2 * $GRANULARITY ))
+TARGET_FREE_CPU=$GRANULARITY
 
 PAUSE_SHORT="1s"
 PAUSE_LONG="5s"
